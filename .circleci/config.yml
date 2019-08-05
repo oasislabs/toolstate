@@ -1,0 +1,79 @@
+version: 2.1
+
+
+executors:
+  rust:
+    environment:
+      PATH: /root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      LD_LIBRARY_PATH: /root/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib
+    docker:
+      - image: oasislabs/rust:latest
+    resource_class: xlarge
+
+  mac:
+    environment:
+      PATH: /Users/distiller/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      LD_LIBRARY_PATH: /Users/distiller/.rustup/toolchains/nightly-2019-08-01-x86_64-apple-darwin/lib
+      DYLD_LIBRARY_PATH: /Users/distiller/.rustup/toolchains/nightly-2019-08-01-x86_64-apple-darwin/lib
+    macos:
+      xcode: "11.0.0"
+
+
+commands:
+  run_pipeline:
+    steps:
+      - run:
+          name: Install python deps
+          command: pip3 install boto3 yapf pylint
+      - checkout
+      - run:
+          name: Checkstyle
+          command: |
+            yapf --diff *.py
+            pylint *.py
+      - run:
+          no_output_timeout: 1h
+          command: python3 update_toolstate.py
+
+
+jobs:
+  linux:
+    executor: rust
+    steps:
+      - run:
+          name: Install dependencies
+          command: |
+            apt-get install -y nodejs npm python3 python3-pip
+            npm install -g yarn
+      - run_pipeline
+
+  macos:
+    executor: mac
+    steps:
+      - run:
+          name: Install dependencies
+          command: |
+            curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain nightly-2019-08-01
+            rustup target add wasm32-wasi
+      - run_pipeline
+
+
+workflows:
+  version: 2
+
+  primary:
+    jobs:
+      - linux
+      - macos
+
+  nightly:
+    triggers:
+      - schedule:
+          cron: "0 15 * * *" # 7 am pacific
+          filters:
+            branches:
+              only:
+                - master
+    jobs:
+      - linux
+      - macos

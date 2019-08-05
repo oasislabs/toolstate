@@ -1,0 +1,7 @@
+[MASTER]
+good-names=i,j,k,s3,cp
+no-docstring-rgx=^(_|[a-z]+$|oasis_chain$)
+
+[REPORTS]
+output-format=colorized
+score=no

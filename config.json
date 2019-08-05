@@ -1,0 +1,15 @@
+{
+  "tools": {
+    "oasis-chain": {
+      "source": "https://github.com/oasislabs/oasis-chain",
+      "envs": {"RUSTFLAGS": "-Ctarget-feature=+aes,+ssse3"}
+    },
+    "oasis-build": {
+      "source": "https://github.com/oasislabs/oasis-rs"
+    },
+    "oasis": {
+      "pkg": "oasis-cli"
+    }
+  },
+  "canaries": ["oasislabs/tutorials", "oasislabs/template"]
+}
