@@ -20,7 +20,7 @@ TOOLS_DIR = osp.join(BASE_DIR, 'tools')
 BIN_DIR = osp.join(TOOLS_DIR, 'bin')
 CANARIES_DIR = osp.join(BASE_DIR, 'canaries')
 MYPROJ = 'my_project'
-BIN_BUCKET = 'oasis-tools'
+BIN_BUCKET = 'tools.oasis.dev'
 CACHE_BIN_PFX = f'{sys.platform}/cache/'
 CD_BIN_PFX = f'{sys.platform}/current/'  # cd = continuous deployment
 HISTFILE_KEY = 'successful_builds'
@@ -66,7 +66,7 @@ def get_tools(toolspecs, s3):
     run(f'chmod -R a+x {TOOLS_DIR}')
 
     if already_cached:  # remaining keys are stale
-        to_delete = dict(Objects=[{'Key': k for k in already_cached.values()}], Quiet=True)
+        to_delete = {'Objects': [{'Key': k} for k in already_cached.values()]}
         s3.delete_objects(Bucket=BIN_BUCKET, Delete=to_delete)
 
 
@@ -138,7 +138,7 @@ def update_toolstate(toolspecs, s3, history):
             s3.copy(src, BIN_BUCKET, new_cd_key)
 
     if existing_cd_keys:
-        to_delete = dict(Objects=[{'Key': k for k in existing_cd_keys.values()}], Quiet=True)
+        to_delete = {'Objects': [{'Key': k} for k in existing_cd_keys.values()]}
         s3.delete_objects(Bucket=BIN_BUCKET, Delete=to_delete)
 
 
@@ -204,8 +204,8 @@ def pushd(path):
 
 @contextmanager
 def oasis_chain():
-    print('+ oasis-chain &')
-    cp = subprocess.Popen(['oasis', 'chain'], env={'PATH': BIN_DIR}, stdout=DEVNULL)
+    env = {'PATH': f'{BIN_DIR}:/usr/bin', 'HOME': os.environ['HOME']}
+    cp = subprocess.Popen(['oasis', 'chain'], env=env, stdout=DEVNULL)
     yield
     cp.terminate()
     cp.wait()
