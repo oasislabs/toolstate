@@ -1,5 +1,7 @@
 #!/usr/bin/env python
-"""Bootstraps the Oasis CLI and uses it to install the most recent release."""
+"""Bootstraps the Oasis CLI and uses it to install the most recent release.
+This script lives in https://github.com/oasislabs/toolstate.
+"""
 
 import argparse
 import os
@@ -77,7 +79,7 @@ def _parse_args():
 
     def _ensure_dir(path):
         if osp.exists(path) and not osp.isdir(path):
-            raise RuntimeError('`{}` is expected to be a directory.')
+            raise RuntimeError('`%s` is expected to be a directory.' % path)
         if not osp.exists(path):
             os.makedirs(path)
         return path
@@ -142,12 +144,15 @@ def install_rust(args):
 
 
 def install_node(plat, args):
-    node_vers = run('curl -sSL https://nodejs.org/dist/latest/', capture=True)
+    node_vers = run('curl -sSL https://nodejs.org/dist/latest/', capture=True).decode('utf8')
     node_ver, node_major_ver = re.search(r'node-(v(\d+)\.\d+\.\d+)\.tar.gz', node_vers).groups()
 
     if plat == PLAT_DARWIN:
         if which('brew'):  # This will a.s. be Homebrew.
-            return run('brew -q install node')
+            if args.force:
+                run('brew uninstall node', check=False, stdout=DEVNULL, stderr=DEVNULL)
+            return run('brew install %s node' % ('--force' if args.force else ''))
+
         if which('port'):  # There are no common non-MacPorts tools with this name.
             return run('port install node%s' % node_major_ver)
 
@@ -169,7 +174,7 @@ def install_node(plat, args):
 
 def install_oasis(plat, args):
     current_tools = run('curl -sSL %s/successful_builds' % TOOLS_URL, capture=True)
-    for tools in current_tools.split('\n')[::-1]:
+    for tools in current_tools.decode('utf8').split('\n')[::-1]:
         _date, build_plat, tool_hashes = tools.split(' ', 2)
         if build_plat == plat:
             oasis_cli_key = next(
@@ -179,7 +184,7 @@ def install_oasis(plat, args):
 
     oasis_path = osp.join(args.prefix, 'bin', 'oasis')
     if not args.force and osp.exists(oasis_path):
-        raise Exception('`%s` already exists!' % oasis_path)
+        raise RuntimeError('`%s` already exists!' % oasis_path)
 
     s3_url = '%s/%s/current/%s' % (TOOLS_URL, plat, oasis_cli_key)
     run('curl -Lo {path} {url}'.format(path=oasis_path, url=s3_url))
@@ -206,7 +211,7 @@ def is_oasis(path):
         return False
     try:
         help_msg = run('%s --help' % path, capture=True, env=_skipconfig_env())
-        return 'Oasis developer tools' in help_msg
+        return 'Oasis developer tools' in help_msg.decode('utf8')
     except subprocess.CalledProcessError:
         pass
     return False
