@@ -144,7 +144,7 @@ def install_rust(args):
 
 
 def install_node(plat, args):
-    node_vers = run('curl -sSL https://nodejs.org/dist/latest/', capture=True).decode('utf8')
+    node_vers = run('curl -sSL https://nodejs.org/dist/latest/', capture=True)
     node_ver, node_major_ver = re.search(r'node-(v(\d+)\.\d+\.\d+)\.tar.gz', node_vers).groups()
 
     if plat == PLAT_DARWIN:
@@ -174,7 +174,7 @@ def install_node(plat, args):
 
 def install_oasis(plat, args):
     current_tools = run('curl -sSL %s/successful_builds' % TOOLS_URL, capture=True)
-    for tools in current_tools.decode('utf8').split('\n')[::-1]:
+    for tools in current_tools.split('\n')[::-1]:
         _date, build_plat, tool_hashes = tools.split(' ', 2)
         if build_plat == plat:
             oasis_cli_key = next(
@@ -211,7 +211,7 @@ def is_oasis(path):
         return False
     try:
         help_msg = run('%s --help' % path, capture=True, env=_skipconfig_env())
-        return 'Oasis developer tools' in help_msg.decode('utf8')
+        return 'Oasis developer tools' in help_msg
     except subprocess.CalledProcessError:
         pass
     return False
@@ -249,7 +249,7 @@ def run(cmd, capture=False, check=True, **call_args):
     # note: the cases below must be expanded to prevent pylint from becoming
     # confused about the return type (string when capture, int otherwise)
     if capture:
-        return subprocess.check_output(cmd, **call_args).strip()
+        return subprocess.check_output(cmd, **call_args).decode('utf8').strip()
     if check:
         return subprocess.check_call(cmd, **call_args)
     return subprocess.call(cmd, **call_args)

@@ -35,14 +35,14 @@ def main():
 
     s3 = boto3.client('s3')
 
-    history, last_hashes = get_history(s3)
+    _, last_hashes = get_history(s3)
     if tool_hashes == last_hashes:
         print(f'current: {" ".join(last_hashes)}')
         return
 
     get_tools(toolspecs, s3)
     run_tests(config)
-    update_toolstate(toolspecs, s3, history)
+    update_toolstate(toolspecs, s3)
 
 
 def get_tools(toolspecs, s3):
@@ -115,11 +115,14 @@ def run_tests(config):
             run('oasis test -q')
 
 
-def update_toolstate(toolspecs, s3, history):
+def update_toolstate(toolspecs, s3):
     """Uploads built artifacts to the s3 under the current-but-not-released prefex.
        Removes any outdated artifacts."""
     tstamp = datetime.utcnow().isoformat()
     artifact_keys = (spec.s3_key for spec in toolspecs.values())
+    history, _ = get_history(s3)
+    # ^ history has to be re-fetched so that it's as close to atomic as possible.
+    # remember that other platforms' builds are also trying to push.
     history.append(f'{tstamp} {sys.platform} {" ".join(artifact_keys)}')
     s3.put_object(
         Bucket=BIN_BUCKET,

@@ -21,7 +21,7 @@ executors:
       PATH: /Users/distiller/.local/bin:/Users/distiller/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       DYLD_LIBRARY_PATH: /Users/distiller/.rustup/toolchains/nightly-2019-08-01-x86_64-apple-darwin/lib
     macos:
-      xcode: "11.0.0"
+      xcode: 11.0.0
 
 
 commands:
@@ -41,6 +41,7 @@ commands:
     steps:
       - checkout
       - run: python2.7 installer.py --speedrun
+      - run: python3 installer.py --speedrun --force
       - run: oasis chain --help
 
 
@@ -74,7 +75,7 @@ jobs:
           command: |
             # The ubuntu image is minimal. A dev environment comes with these preinstalled.
             apt-get -qq update
-            apt-get -qq install python rsync curl git
+            apt-get -qq install python rsync curl git python3
       - test_installer
 
   macos_install:
