@@ -14,7 +14,7 @@ import subprocess
 TOOLS_URL = 'https://tools.oasis.dev'
 NODE_DIST_URL = 'https://nodejs.org/dist/{ver}/node-{ver}-{plat}-x64.tar.gz'
 RUST_VER = 'nightly-2019-08-01'
-REQUIRED_UTILS = ['curl', 'git', 'rsync']
+REQUIRED_UTILS = ['cc', 'curl', 'git', 'rsync']
 
 PLAT_DARWIN = 'darwin'
 PLAT_LINUX = 'linux'
@@ -30,7 +30,7 @@ def main():
 
     missing_utils = [u for u in REQUIRED_UTILS if not which(u)]
     if missing_utils:
-        raise RuntimeError('missing CLI utilities: %s' % ', '.join(missing_utils))
+        raise RuntimeError('missing system utilities: %s' % ', '.join(missing_utils))
 
     args = _parse_args()
 
@@ -112,6 +112,8 @@ def install(plat, args):
         install_rust(args)
         record_install('rust')
         print('')
+    if not args.no_rust:
+        run('%s/.cargo/bin/rustup target add wasm32-wasi' % os.environ['HOME'])
 
     def bin_dir(*x):
         return osp.join(args.bin_dir, *x)

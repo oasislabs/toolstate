@@ -42,7 +42,12 @@ commands:
       - checkout
       - run: python2.7 installer.py --speedrun
       - run: python3 installer.py --speedrun --force
-      - run: oasis chain --help
+      - run: |
+          oasis init test_proj
+          cd test_proj
+          oasis build
+          oasis chain &
+          oasis test
 
 
 jobs:
@@ -75,7 +80,7 @@ jobs:
           command: |
             # The ubuntu image is minimal. A dev environment comes with these preinstalled.
             apt-get -qq update
-            apt-get -qq install python rsync curl git python3
+            apt-get -qq install python rsync curl git python3 build-essential
       - test_installer
 
   macos_install:
