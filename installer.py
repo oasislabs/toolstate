@@ -14,7 +14,7 @@ import subprocess
 TOOLS_URL = 'https://tools.oasis.dev'
 NODE_DIST_URL = 'https://nodejs.org/dist/{ver}/node-{ver}-{plat}-x64.tar.gz'
 RUST_VER = 'nightly-2019-08-01'
-REQUIRED_UTILS = ['cc', 'curl', 'git', 'rsync']
+REQUIRED_UTILS = ['cc', 'curl', 'git']
 
 PLAT_DARWIN = 'darwin'
 PLAT_LINUX = 'linux'
@@ -36,14 +36,15 @@ def main():
 
     install(plat, args)
 
-    if args.no_modify_path:
+    has_oasis_on_path = which('oasis')
+    if args.no_modify_path and not has_oasis_on_path:
         required_exports = get_required_exports(plat, args)
-        print_important('Remember to\n')
-        print_important('\n'.join('\t' + e for e in required_exports) + '\n')
-    elif not which('oasis'):
+        print_important('Remember to run the following before using `oasis`:\n')
+        print_important('\n'.join('    ' + e for e in required_exports))
+        print('')
+    elif not has_oasis_on_path:
         modify_path(plat, args)
-        print_info('`oasis` will be available when you next log in.')
-    print('')
+        print_info('`oasis` will be available when you next log in.\n')
 
     print_success("You're ready to start developing on Oasis!")
 
@@ -109,11 +110,11 @@ def install(plat, args):
     has_rust_install = osp.isdir(osp.expanduser('~/.cargo')) and which('rustup')
     if not args.no_rust and (args.force or not has_rust_install):
         print_header('Installing Rust')
-        install_rust(args)
+        install_rust()
         record_install('rust')
         print('')
     if not args.no_rust:
-        run('%s/.cargo/bin/rustup target add wasm32-wasi' % os.environ['HOME'])
+        run('%s/.cargo/bin/rustup target add wasm32-wasi' % os.environ['HOME'], silent=True)
 
     def bin_dir(*x):
         return osp.join(args.bin_dir, *x)
@@ -137,10 +138,8 @@ def install(plat, args):
         print('Run `oasis set-toolchain latest` to update.\n')
 
 
-def install_rust(args):
-    rustup_args = '-y --default-toolchain ' + RUST_VER
-    if args.no_modify_path:
-        rustup_args += ' --no-modify-path'
+def install_rust():
+    rustup_args = '-y --no-modify-path --default-toolchain ' + RUST_VER
     run("curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- %s" % rustup_args,
         shell=True)  # curl invocation taken from https://rustup.rs
 
@@ -152,24 +151,15 @@ def install_node(plat, args):
     if plat == PLAT_DARWIN:
         if which('brew'):  # This will a.s. be Homebrew.
             if args.force:
-                run('brew uninstall node', check=False, stdout=DEVNULL, stderr=DEVNULL)
+                run('brew uninstall node', check=False, silent=True)
             return run('brew install %s node' % ('--force' if args.force else ''))
 
         if which('port'):  # There are no common non-MacPorts tools with this name.
             return run('port install node%s' % node_major_ver)
 
-    node_dist_url = NODE_DIST_URL.format(plat=plat, ver=node_ver)
-
-    node_tmpdir = '/tmp/node-%s' % node_ver
-    if not osp.isdir(node_tmpdir):
-        os.mkdir(node_tmpdir)
-    run('curl -L "{url}" | tar xz -C {dir} --strip-components=1 --exclude *.md --exclude LICENSE'.
-        format(url=node_dist_url, dir=node_tmpdir),
-        shell=True)
-    run('rsync -au %s/ %s/' % (node_tmpdir, args.prefix))
-    run('rm -r %s' % node_tmpdir)
-    # ^ node_tmpdir is `/tmp/node-{node_ver}`. `node_ver` is extracted from the regex above
-    # and is thus constrained to be 'v' followed by a semver.
+    curl = 'curl -L# "%s"' % NODE_DIST_URL.format(plat=plat, ver=node_ver)
+    tar = 'tar xz -C %s --strip-components=1 --exclude "*.md" --exclude LICENSE' % args.prefix
+    run('{curl} | {tar}'.format(curl=curl, tar=tar), shell=True)
 
     return node_ver
 
@@ -189,7 +179,7 @@ def install_oasis(plat, args):
         raise RuntimeError('`%s` already exists!' % oasis_path)
 
     s3_url = '%s/%s/current/%s' % (TOOLS_URL, plat, oasis_cli_key)
-    run('curl -Lo {path} {url}'.format(path=oasis_path, url=s3_url))
+    run('curl -sSLo {path} {url}'.format(path=oasis_path, url=s3_url))
     run('chmod a+x %s' % oasis_path)
     if args.speedrun:
         oasis_cp = subprocess.Popen(
@@ -241,24 +231,33 @@ def modify_path(plat, args):
     else:
         rcfile = '~/.profile'
 
-    with open(osp.expanduser(rcfile), 'a') as f_rc:
-        f_rc.write('\n%s\n' % '\n'.join(get_required_exports(plat, args)))
+    required_exports = get_required_exports(plat, args)
+    rc_file = osp.expanduser(rcfile)
+
+    if osp.isfile(rc_file):
+        with open(rc_file) as f_rc:
+            rc_lines = set(line.rstrip() for line in f_rc)
+        if all(export in rc_lines for export in required_exports):
+            return
+
+    with open(rc_file, 'a') as f_rc:
+        f_rc.write('\n%s\n' % '\n'.join(required_exports))
 
 
-def run(cmd, capture=False, check=True, **call_args):
+def run(cmd, capture=False, check=True, silent=False, **call_args):
     if not call_args.get('shell', False):
         cmd = shlex.split(cmd)
     # note: the cases below must be expanded to prevent pylint from becoming
     # confused about the return type (string when capture, int otherwise)
     if capture:
         return subprocess.check_output(cmd, **call_args).decode('utf8').strip()
-    if check:
-        return subprocess.check_call(cmd, **call_args)
-    return subprocess.call(cmd, **call_args)
+    stderr = DEVNULL if silent else None
+    call = subprocess.check_call if check else subprocess.call
+    return call(cmd, stdout=DEVNULL, stderr=stderr, **call_args)
 
 
 def which(exe):
-    return run('which %s' % exe, check=False, stdout=DEVNULL) == 0
+    return run('which %s' % exe, check=False) == 0
 
 
 # yapf:disable pylint:disable=invalid-name,multiple-statements,missing-docstring
