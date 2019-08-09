@@ -106,7 +106,7 @@ workflows:
   nightly:
     triggers:
       - schedule:
-          cron: "0 15 * * *" # 7 am pacific
+          cron: "0 * * * *" # hourly
           filters:
             branches:
               only:
