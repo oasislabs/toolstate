@@ -1,5 +1,7 @@
 # Oasis Toolstate
 
+[![CircleCI](https://circleci.com/gh/oasislabs/toolstate.svg?style=svg)](https://circleci.com/gh/oasislabs/toolstate)
+
 This repo contains utilities for updating and publishing the status of the Oasis developer toolchain.
 
 If you're a developer, you're probably here because you downloaded [installer.py](installer.py) and saw that it points here.
