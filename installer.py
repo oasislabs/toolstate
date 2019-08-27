@@ -13,7 +13,7 @@ import subprocess
 
 TOOLS_URL = 'https://tools.oasis.dev'
 NODE_DIST_URL = 'https://nodejs.org/dist/{ver}/node-{ver}-{plat}-x64.tar.gz'
-RUST_VER = 'nightly-2019-08-01'
+RUST_VER = 'nightly-2019-08-26'
 REQUIRED_UTILS = ['cc', 'curl', 'git']
 
 PLAT_DARWIN = 'darwin'
