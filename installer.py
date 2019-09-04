@@ -34,16 +34,18 @@ def main():
 
     args = _parse_args()
 
+    shell = os.environ.get('SHELL', 'sh')
+
     install(plat, args)
 
     has_oasis_on_path = which('oasis')
-    if args.no_modify_path and not has_oasis_on_path:
-        required_exports = get_required_exports(plat, args)
+    if args.no_modify_shell and not has_oasis_on_path:
+        required_exports = get_shell_additions(plat, args, shell)
         print_important('Remember to run the following before using `oasis`:\n')
         print_important('\n'.join('    ' + e for e in required_exports))
         print('')
     elif not has_oasis_on_path:
-        modify_path(plat, args)
+        modify_shell_profile(plat, args, shell)
         print_info('`oasis` will be available when you next log in.\n')
 
     print_success("You're ready to start developing on Oasis!")
@@ -65,9 +67,7 @@ def _parse_args():
         default=default_prefix,
         help="Installation prefix. Default: `%s`" % default_prefix)
     parser.add_argument(
-        '--no-modify-path',
-        action='store_true',
-        help="Don't add Rust and Oasis executables to your PATH")
+        '--no-modify-shell', action='store_true', help="Don't modify your shell profile")
     parser.add_argument(
         '--force', action='store_true', help="Force install of not-deselected components.")
     parser.add_argument(
@@ -209,30 +209,36 @@ def is_oasis(path):
     return False
 
 
-def get_required_exports(plat, args):
+def get_shell_additions(plat, args, shell):
     """Returns the env exports required to run the Oasis toolchain."""
     path_export = 'export PATH=%s/bin:${CARGO_HOME:-~/.cargo}/bin:$PATH' % args.prefix
     exports = [path_export]
     ld_path_key = '%s_LIBRARY_PATH' % ('DYLD' if plat == PLAT_DARWIN else 'LD')
     if RUST_SYSROOT_PREFIX not in os.environ.get(ld_path_key, ''):
         exports.append('export {0}=$(rustc --print sysroot)/lib:{0}'.format(ld_path_key))
+
+    data_dir = osp.join(args.prefix, 'share', 'oasis')
+    if 'zsh' in shell:
+        exports.append('fpath=("%s" $fpath)' % data_dir)
+    elif 'bash' in shell:
+        exports.append('source "%s"' % osp.join(data_dir, 'completions.sh'))
+
     return exports
 
 
-def modify_path(plat, args):
+def modify_shell_profile(plat, args, shell):
     """Adds the Oasis tools to the user's PATH via a profile file.
        Assumes that the current shell is the user's preferred shell
        so to not pollute other shells' profiles."""
-    shell = run('ps -p $$ -oargs=', capture=True, shell=True)
     if 'zsh' in shell:
         rcfile = osp.join(os.environ.get('ZDOTDIR', '~'), '.zprofile')
     elif 'bash' in shell:
-        rcfile = '~/.bash_profile'
+        rcfile = '~/.bashrc'
     else:
         rcfile = '~/.profile'
-
-    required_exports = get_required_exports(plat, args)
     rc_file = osp.expanduser(rcfile)
+
+    required_exports = get_shell_additions(plat, args, shell)
 
     if osp.isfile(rc_file):
         with open(rc_file) as f_rc:
