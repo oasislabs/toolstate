@@ -7,7 +7,7 @@ year=$(date +"%y")
 week=$(date +"%V")
 release="$year.$week"
 
-confirmation="I guess so"
+confirmation="Do it!"
 
 read -r -p "Promote \`current\` to release $release? Type '$confirmation' to confirm: " response
 if [[ "$response" = "$confirmation" ]]; then
