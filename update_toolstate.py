@@ -91,7 +91,9 @@ def run_tests(config):
             canary_dir = osp.split(canary)[-1]
             with pushd(osp.join(CANARIES_DIR, canary_dir)):
                 if osp.isdir('.git'):
-                    run('git pull', stdout=DEVNULL, stderr=DEVNULL)
+                    run('git fetch origin && git reset --hard origin/master',
+                        stdout=DEVNULL,
+                        stderr=DEVNULL)
                 else:
                     run(f'git clone -q --depth 1 https://github.com/{canary} .', stdout=DEVNULL)
 
