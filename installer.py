@@ -114,7 +114,11 @@ def install(plat, args):
         record_install('rust')
         print('')
     if not args.no_rust:
-        run('%s/.cargo/bin/rustup target add wasm32-wasi' % os.environ['HOME'], silent=True)
+        run('%s/.cargo/bin/rustup toolchain install %s' % (os.environ['HOME'], RUST_VER),
+            silent=True)
+        run('%s/.cargo/bin/rustup target add wasm32-wasi --toolchain %s' %
+            (os.environ['HOME'], RUST_VER),
+            silent=True)
 
     def bin_dir(*x):
         return osp.join(args.bin_dir, *x)
