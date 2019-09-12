@@ -18,34 +18,33 @@ REQUIRED_UTILS = ['cc', 'curl', 'git']
 
 PLAT_DARWIN = 'darwin'
 PLAT_LINUX = 'linux'
-RUST_SYSROOT_PREFIX = '.rustup/toolchains/%s-x86_64-' % RUST_VER
+RUST_SYSROOT_PREFIX = 'toolchains/%s-x86_64-' % RUST_VER
 INSTALLED_DEPS_FILE = 'installed_dependencies'
 DEVNULL = open('/dev/null', 'w')
 
 
 def main():
-    plat = platform.system().lower()
-    if plat not in {PLAT_DARWIN, PLAT_LINUX} or platform.machine() != 'x86_64':
-        raise RuntimeError('Unsupported platform: %s (%s)' % (plat, platform.machine()))
-
     missing_utils = [u for u in REQUIRED_UTILS if not which(u)]
     if missing_utils:
         raise RuntimeError('missing system utilities: %s' % ', '.join(missing_utils))
 
+    env_info = _get_env_info()
+
+    if env_info.plat not in {PLAT_DARWIN, PLAT_LINUX} or platform.machine() != 'x86_64':
+        raise RuntimeError('Unsupported platform: %s (%s)' % (env_info.plat, platform.machine()))
+
     args = _parse_args()
 
-    shell = os.environ.get('SHELL', 'sh')
-
-    install(plat, args)
+    install(args, env_info)
 
     has_oasis_on_path = which('oasis')
     if args.no_modify_shell and not has_oasis_on_path:
-        required_exports = get_shell_additions(plat, args, shell)
+        required_exports = get_shell_additions(args, env_info)
         print_important('Remember to run the following before using `oasis`:\n')
         print_important('\n'.join('    ' + e for e in required_exports))
         print('')
     elif not has_oasis_on_path:
-        modify_shell_profile(plat, args, shell)
+        modify_shell_profile(args, env_info)
         print_info('`oasis` will be available when you next log in.\n')
 
     print_success("You're ready to start developing on Oasis!")
@@ -78,47 +77,60 @@ def _parse_args():
         '--speedrun', action='store_true', help="Accept default options for all installed tools.")
     args = parser.parse_args()
 
-    def _ensure_dir(path):
-        if osp.exists(path) and not osp.isdir(path):
-            raise RuntimeError('`%s` is expected to be a directory.' % path)
-        if not osp.exists(path):
-            os.makedirs(path)
-        return path
-
     args.bin_dir = _ensure_dir(osp.join(args.prefix, 'bin'))
-
-    config_basedir = os.environ.get('XDG_CONFIG_DIR', osp.join(os.environ['HOME'], '.config'))
-    args.config_dir = _ensure_dir(osp.join(config_basedir, 'oasis'))
 
     return args
 
 
-def install(plat, args):
-    installed_deps_path = osp.join(args.config_dir, INSTALLED_DEPS_FILE)
-    installed_deps = set()
+def _get_env_info():
+    home_dir = os.environ['HOME']
+    data_home = os.environ.get('XDG_DATA_HOME', osp.join(home_dir, '.local', 'share'))
+
+    return argparse.Namespace(
+        home_dir=home_dir,
+        data_dir=_ensure_dir(osp.join(data_home, 'oasis')),
+        rustup_home=os.environ.get('RUSTUP_HOME', osp.join(home_dir, '.rustup')),
+        cargo_home=os.environ.get('CARGO_HOME', osp.join(home_dir, '.cargo')),
+        shell=os.environ.get('SHELL', 'sh'),
+        plat=platform.system().lower(),
+    )
+
+
+def _ensure_dir(path):
+    if osp.exists(path) and not osp.isdir(path):
+        raise RuntimeError('`%s` is expected to be a directory.' % path)
+    if not osp.exists(path):
+        os.makedirs(path)
+    return path
+
+
+def install(args, env_info):
+    installed_deps_path = osp.join(env_info.data_dir, INSTALLED_DEPS_FILE)
+    preinstalled_deps = set()
     if osp.isfile(installed_deps_path):
         with open(installed_deps_path) as f_installed:
-            installed_deps.update(f_installed.read().rstrip().split('\n'))
+            preinstalled_deps.update(f_installed.read().rstrip().split('\n'))
+    else:
+        with open(installed_deps_path, 'w') as _:
+            pass
 
-    def record_install(dep):
+    def _record_install(dep):
         """Record installed tool so that they can be uninstalled later."""
-        if dep in installed_deps:
+        if dep in preinstalled_deps:
             return
         with open(installed_deps_path, 'a') as f_installed:
             f_installed.write(dep + '\n')
 
-    has_rust_install = osp.isdir(osp.expanduser('~/.cargo')) and which('rustup')
+    has_rust_install = which('rustup')
     if not args.no_rust and (args.force or not has_rust_install):
         print_header('Installing Rust')
         install_rust()
-        record_install('rust')
+        _record_install('rust')
         print('')
     if not args.no_rust:
-        run('%s/.cargo/bin/rustup toolchain install %s' % (os.environ['HOME'], RUST_VER),
-            silent=True)
-        run('%s/.cargo/bin/rustup target add wasm32-wasi --toolchain %s' %
-            (os.environ['HOME'], RUST_VER),
-            silent=True)
+        rustup_bin = osp.join(env_info.cargo_home, 'bin', 'rustup')
+        run('%s toolchain install %s' % (rustup_bin, RUST_VER), silent=True)
+        run('%s target add wasm32-wasi --toolchain %s' % (rustup_bin, RUST_VER), silent=True)
 
     def bin_dir(*x):
         return osp.join(args.bin_dir, *x)
@@ -128,14 +140,14 @@ def install(plat, args):
     # Disjunction b/c `npm` might be in ~/.local/bin but not on PATH.
     if not args.no_node and (args.force or not has_npm_install):
         print_header('Installing Node')
-        node_ver = install_node(plat, args)
-        record_install('node-%s' % node_ver)
+        node_ver = install_node(args, env_info)
+        _record_install('node-%s' % node_ver)
         print('')
 
     has_oasis_install = osp.isfile(bin_dir('oasis-chain')) and is_oasis(bin_dir('oasis'))
     if args.force or not has_oasis_install:
         print_header('Installing the Oasis toolchain')
-        install_oasis(plat, args)
+        install_oasis(args, env_info)
         print('')
     else:
         print_header('The Oasis toolchain is already installed.')
@@ -148,11 +160,11 @@ def install_rust():
         shell=True)  # curl invocation taken from https://rustup.rs
 
 
-def install_node(plat, args):
+def install_node(args, env_info):
     node_vers = run('curl -sSL https://nodejs.org/dist/latest/', capture=True)
     node_ver, node_major_ver = re.search(r'node-(v(\d+)\.\d+\.\d+)\.tar.gz', node_vers).groups()
 
-    if plat == PLAT_DARWIN:
+    if env_info.plat == PLAT_DARWIN:
         if which('brew'):  # This will a.s. be Homebrew.
             if args.force:
                 run('brew uninstall node', check=False, silent=True)
@@ -161,18 +173,18 @@ def install_node(plat, args):
         if which('port'):  # There are no common non-MacPorts tools with this name.
             return run('port install node%s' % node_major_ver)
 
-    curl = 'curl -L# "%s"' % NODE_DIST_URL.format(plat=plat, ver=node_ver)
+    curl = 'curl -L# "%s"' % NODE_DIST_URL.format(plat=env_info.plat, ver=node_ver)
     tar = 'tar xz -C %s --strip-components=1 --exclude "*.md" --exclude LICENSE' % args.prefix
     run('{curl} | {tar}'.format(curl=curl, tar=tar), shell=True)
 
     return node_ver
 
 
-def install_oasis(plat, args):
+def install_oasis(args, env_info):
     current_tools = run('curl -sSL %s/successful_builds' % TOOLS_URL, capture=True)
     for tools in current_tools.split('\n')[::-1]:
         _date, build_plat, tool_hashes = tools.split(' ', 2)
-        if build_plat == plat:
+        if build_plat == env_info.plat:
             oasis_cli_key = next(
                 tool_hash for tool_hash in tool_hashes.split(' ')[2:]
                 if re.match('oasis-[a-z0-f]{7,}$', tool_hash))
@@ -182,7 +194,7 @@ def install_oasis(plat, args):
     if not args.force and osp.exists(oasis_path):
         raise RuntimeError('`%s` already exists!' % oasis_path)
 
-    s3_url = '%s/%s/current/%s' % (TOOLS_URL, plat, oasis_cli_key)
+    s3_url = '%s/%s/current/%s' % (TOOLS_URL, env_info.plat, oasis_cli_key)
     run('curl -sSLo {path} {url}'.format(path=oasis_path, url=s3_url))
     run('chmod a+x %s' % oasis_path)
     if args.speedrun:
@@ -213,36 +225,36 @@ def is_oasis(path):
     return False
 
 
-def get_shell_additions(plat, args, shell):
+def get_shell_additions(args, env_info):
     """Returns the env exports required to run the Oasis toolchain."""
     path_export = 'export PATH=%s/bin:${CARGO_HOME:-~/.cargo}/bin:$PATH' % args.prefix
     exports = [path_export]
-    ld_path_key = '%s_LIBRARY_PATH' % ('DYLD' if plat == PLAT_DARWIN else 'LD')
-    if RUST_SYSROOT_PREFIX not in os.environ.get(ld_path_key, ''):
+    ld_path_key = '%s_LIBRARY_PATH' % ('DYLD' if env_info.plat == PLAT_DARWIN else 'LD')
+    if osp.join(env_info.rustup_home, RUST_SYSROOT_PREFIX) not in os.environ.get(ld_path_key, ''):
         exports.append('export {0}=$(rustc --print sysroot)/lib:{0}'.format(ld_path_key))
 
     data_dir = osp.join(args.prefix, 'share', 'oasis')
-    if 'zsh' in shell:
+    if 'zsh' in env_info.shell:
         exports.append('fpath=("%s" $fpath)' % data_dir)
-    elif 'bash' in shell:
+    elif 'bash' in env_info.shell:
         exports.append('source "%s"' % osp.join(data_dir, 'completions.sh'))
 
     return exports
 
 
-def modify_shell_profile(plat, args, shell):
+def modify_shell_profile(args, env_info):
     """Adds the Oasis tools to the user's PATH via a profile file.
        Assumes that the current shell is the user's preferred shell
        so to not pollute other shells' profiles."""
-    if 'zsh' in shell:
+    if 'zsh' in env_info.shell:
         rcfile = osp.join(os.environ.get('ZDOTDIR', '~'), '.zprofile')
-    elif 'bash' in shell:
+    elif 'bash' in env_info.shell:
         rcfile = '~/.bashrc'
     else:
         rcfile = '~/.profile'
     rc_file = osp.expanduser(rcfile)
 
-    required_exports = get_shell_additions(plat, args, shell)
+    required_exports = get_shell_additions(args, env_info)
 
     if osp.isfile(rc_file):
         with open(rc_file) as f_rc:
