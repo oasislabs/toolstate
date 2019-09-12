@@ -44,8 +44,9 @@ def main():
         print_important('\n'.join('    ' + e for e in required_exports))
         print('')
     elif not has_oasis_on_path:
-        modify_shell_profile(args, env_info)
+        rc_file = modify_shell_profile(args, env_info)
         print_info('`oasis` will be available when you next log in.\n')
+        print_info('To configure your current shell run `source %s`\n' % rc_file)
 
     print_success("You're ready to start developing on Oasis!")
 
@@ -231,7 +232,7 @@ def get_shell_additions(args, env_info):
     exports = [path_export]
     ld_path_key = '%s_LIBRARY_PATH' % ('DYLD' if env_info.plat == PLAT_DARWIN else 'LD')
     if osp.join(env_info.rustup_home, RUST_SYSROOT_PREFIX) not in os.environ.get(ld_path_key, ''):
-        exports.append('export {0}=$(rustc --print sysroot)/lib:{0}'.format(ld_path_key))
+        exports.append('export {0}=$(rustc --print sysroot)/lib:${0}'.format(ld_path_key))
 
     data_dir = osp.join(args.prefix, 'share', 'oasis')
     if 'zsh' in env_info.shell:
@@ -249,21 +250,26 @@ def modify_shell_profile(args, env_info):
     if 'zsh' in env_info.shell:
         rcfile = osp.join(os.environ.get('ZDOTDIR', '~'), '.zprofile')
     elif 'bash' in env_info.shell:
-        rcfile = '~/.bashrc'
+        if env_info.plat == PLAT_DARWIN:
+            rcfile = '~/.bash_profile'
+        else:
+            rcfile = '~/.bashrc'
     else:
         rcfile = '~/.profile'
     rc_file = osp.expanduser(rcfile)
 
     required_exports = get_shell_additions(args, env_info)
 
+    rc_lines = set()
     if osp.isfile(rc_file):
         with open(rc_file) as f_rc:
             rc_lines = set(line.rstrip() for line in f_rc)
-        if all(export in rc_lines for export in required_exports):
-            return
 
-    with open(rc_file, 'a') as f_rc:
-        f_rc.write('\n%s\n' % '\n'.join(required_exports))
+    if not all(export in rc_lines for export in required_exports):
+        with open(rc_file, 'a') as f_rc:
+            f_rc.write('\n%s\n' % '\n'.join(required_exports))
+
+    return rc_file
 
 
 def run(cmd, capture=False, check=True, silent=False, **call_args):
