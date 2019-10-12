@@ -9,7 +9,6 @@ import os.path as osp
 import platform
 import re
 import shlex
-import stat
 import subprocess
 
 TOOLS_URL = 'https://tools.oasis.dev'
@@ -226,7 +225,7 @@ def generate_uninstall_script(args, env_info):
     uninstall_path = osp.join(data_dir, 'uninstall.sh')
     with open(uninstall_path, "w") as file:
         file.write(script)
-    os.chmod(uninstall_path, os.stat(uninstall_path).st_mode | stat.S_IEXEC)
+    run('chmod a+x %s' % uninstall_path)
 
 
 def _skipconfig_env():
