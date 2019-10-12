@@ -9,6 +9,7 @@ import os.path as osp
 import platform
 import re
 import shlex
+import stat
 import subprocess
 
 TOOLS_URL = 'https://tools.oasis.dev'
@@ -198,6 +199,9 @@ def install_oasis(args, env_info):
     s3_url = '%s/%s/current/%s' % (TOOLS_URL, env_info.plat, oasis_cli_key)
     run('curl -sSLo {path} {url}'.format(path=oasis_path, url=s3_url))
     run('chmod a+x %s' % oasis_path)
+
+    generate_uninstall_script(args, env_info)
+
     if args.speedrun:
         oasis_cp = subprocess.Popen(
             oasis_path, stdin=subprocess.PIPE, stdout=DEVNULL, stderr=DEVNULL)
@@ -206,6 +210,23 @@ def install_oasis(args, env_info):
             print_error('Unable to set default configuration for Oasis CLI (--speedrun)')
 
     run('%s set-toolchain %s' % (oasis_path, args.toolchain), env=_skipconfig_env())
+
+
+def generate_uninstall_script(args, env_info):
+    data_dir = env_info.data_dir
+    config_dir = env_info.home_dir + '/.config/oasis'
+    bin_dir = args.bin_dir
+    binaries = ','.join(['oasis', 'oasis-build', 'oasis-chain'])
+    rm_cmd = 'rm -rf %s %s %s/{%s} 2> /dev/null' % (data_dir, config_dir, bin_dir, binaries)
+    script = (
+        '#!/usr/bin/env bash\n\n# Uninstall Oasis toolchain\n'
+        'if ! %s\nthen\n  echo "Superuser privilege is required."\n' % rm_cmd +
+        '  exit 1\nfi\necho "Oasis toolchain successfully uninstalled."\n'
+    )
+    uninstall_path = osp.join(data_dir, 'uninstall.sh')
+    with open(uninstall_path, "w") as file:
+        file.write(script)
+    os.chmod(uninstall_path, os.stat(uninstall_path).st_mode | stat.S_IEXEC)
 
 
 def _skipconfig_env():
