@@ -217,11 +217,9 @@ def generate_uninstall_script(args, env_info):
     bin_dir = args.bin_dir
     binaries = ','.join(['oasis', 'oasis-build', 'oasis-chain'])
     rm_cmd = 'rm -rf %s %s %s/{%s} 2> /dev/null' % (data_dir, config_dir, bin_dir, binaries)
-    script = (
-        '#!/usr/bin/env bash\n\n# Uninstall Oasis toolchain\n'
-        'if ! %s\nthen\n  echo "Superuser privilege is required."\n' % rm_cmd +
-        '  exit 1\nfi\necho "Oasis toolchain successfully uninstalled."\n'
-    )
+    script = ('#!/usr/bin/env bash\n\n# Uninstall Oasis toolchain\n'
+              'if ! %s\nthen\n  echo "Superuser privilege is required."\n' % rm_cmd +
+              '  exit 1\nfi\necho "Oasis toolchain successfully uninstalled."\n')
     uninstall_path = osp.join(data_dir, 'uninstall.sh')
     with open(uninstall_path, "w") as file:
         file.write(script)
