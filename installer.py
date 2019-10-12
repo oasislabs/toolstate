@@ -212,6 +212,7 @@ def install_oasis(args, env_info):
 
 
 def generate_uninstall_script(args, env_info):
+    """Generates an uninstall script which can be used to remove oasis toolchain"""
     data_dir = env_info.data_dir
     config_dir = env_info.home_dir + '/.config/oasis'
     bin_dir = args.bin_dir
