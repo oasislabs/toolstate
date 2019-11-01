@@ -162,7 +162,7 @@ def install_rust():
 
 
 def install_node(args, env_info):
-    node_vers = run('curl -sSL https://nodejs.org/dist/latest/', capture=True)
+    node_vers = run('curl -sSL https://nodejs.org/dist/latest-v12.x/', capture=True)
     node_ver, node_major_ver = re.search(r'node-(v(\d+)\.\d+\.\d+)\.tar.gz', node_vers).groups()
 
     if env_info.plat == PLAT_DARWIN:
