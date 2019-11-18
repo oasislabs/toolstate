@@ -56,7 +56,7 @@ def get_tools(toolspecs, s3):
 
         if spec.s3_key in already_cached:
             s3.download_file(BIN_BUCKET, cache_key, bin_file)
-            print(f'+ aws s3 cp s3://oasis-tools/{cache_key} {osp.relpath(bin_file, os.getcwd())}')
+            print(f'+ aws s3 cp s3://{BIN_BUCKET}/{cache_key} {osp.relpath(bin_file, os.getcwd())}')
             del already_cached[spec.s3_key]  # not stale
         else:
             envs = dict(**spec.envs, CARGO_TARGET_DIR=osp.join(TOOLS_DIR, 'target'))
