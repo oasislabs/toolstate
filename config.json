@@ -7,8 +7,13 @@
     "oasis-build": {
       "source": "https://github.com/oasislabs/oasis-rs"
     },
-    "oasis": {
-      "pkg": "oasis-cli"
+    "oasis-cli": {
+      "source": "https://github.com/oasislabs/oasis-cli",
+      "name": "oasis"
+    },
+    "oasis-gateway": {
+      "source": "https://github.com/oasislabs/developer-gateway",
+      "builder": "make build-gateway && cp oasis-gateway $TS_TARGET"
     }
   },
   "canaries": ["oasislabs/tutorials", "oasislabs/template"]

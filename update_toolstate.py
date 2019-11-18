@@ -13,7 +13,7 @@ import sys
 
 import boto3
 
-ToolSpec = collections.namedtuple('ToolSpec', 'pkg source envs s3_key')
+ToolSpec = collections.namedtuple('ToolSpec', 'pkg source envs s3_key name builder')
 
 BASE_DIR = osp.abspath(osp.dirname(__file__))
 TOOLS_DIR = osp.join(BASE_DIR, 'tools')
@@ -51,7 +51,7 @@ def get_tools(toolspecs, s3):
     os.makedirs(BIN_DIR, exist_ok=True)
     already_cached = get_tool_keys(s3, prefix=CACHE_BIN_PFX)
     for tool, spec in toolspecs.items():
-        bin_file = osp.join(BIN_DIR, tool)
+        bin_file = osp.join(BIN_DIR, spec.name)
         cache_key = f'{CACHE_BIN_PFX}{spec.s3_key}'
 
         if spec.s3_key in already_cached:
@@ -60,8 +60,14 @@ def get_tools(toolspecs, s3):
             del already_cached[spec.s3_key]  # not stale
         else:
             envs = dict(**spec.envs, CARGO_TARGET_DIR=osp.join(TOOLS_DIR, 'target'))
-            run(f'cargo install --force -q --root {TOOLS_DIR} --git {spec.source} {spec.pkg}',
-                envs=envs)
+            if spec.builder == 'cargo':
+                run(f'cargo install --force -q --root {TOOLS_DIR} --git {spec.source} {spec.pkg}',
+                    envs=envs)
+            else:
+                src_dir = osp.join(TOOLS_DIR, osp.basename(spec.source))
+                run(f'git clone --depth=1 {spec.source} {src_dir}')
+                envs['TS_TARGET'] = bin_file
+                run(spec.builder, cwd=src_dir, envs=envs)
             s3.upload_file(bin_file, BIN_BUCKET, cache_key)
     run(f'chmod -R a+x {TOOLS_DIR}')
 
@@ -161,11 +167,15 @@ def get_toolspecs(config):
     specs = {}
     for tool, cfg in config['tools'].items():
         cfg = cfg if cfg else {}
+        builder = cfg.get('builder', 'cargo')
         pkg = cfg.get('pkg', tool)
-        source = cfg.get('source', f'https://github.com/oasislabs/{pkg}')
+        name = cfg.get('name', pkg)
+        source = cfg.get('source', f'https://github.com/oasislabs/{tool}')
         envs = cfg.get('envs', {})
         hash_ = run(f'git ls-remote {source} master | cut -f1', stdout=PIPE).stdout[:7]
-        specs[tool] = ToolSpec(source=source, envs=envs, pkg=pkg, s3_key=f'{tool}-{hash_}')
+        specs[tool] = ToolSpec(source=source, name=name, envs=envs, pkg=pkg,
+                               builder=builder,
+                               s3_key=f'{tool}-{hash_}')
     return specs
 
 
