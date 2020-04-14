@@ -11,10 +11,12 @@ import subprocess
 from subprocess import PIPE, DEVNULL
 import sys
 
+import urllib.request
 import boto3
 
-ToolSpec = collections.namedtuple('ToolSpec', 'pkg source envs s3_key')
+ToolSpec = collections.namedtuple('ToolSpec', 'pkg source envs s3_key rust_toolchain')
 
+DEFAULT_RUST_TOOLCHAIN = 'nightly-2019-08-26'
 BASE_DIR = osp.abspath(osp.dirname(__file__))
 TOOLS_DIR = osp.join(BASE_DIR, 'tools')
 BIN_DIR = osp.join(TOOLS_DIR, 'bin')
@@ -33,7 +35,14 @@ def main():
     toolspecs = get_toolspecs(config)
     tool_hashes = frozenset(spec.s3_key for spec in toolspecs.values())
 
-    s3 = boto3.client('s3')
+    aws_access_key_id, aws_secret_access_key, aws_session_token = get_aws_credentials(
+        os.environ['VAULT_ADDR'], os.environ['VAULT_ROLE_ID'], os.environ['VAULT_SECRET_ID'])
+
+    s3 = boto3.client(
+        's3',
+        aws_access_key_id=aws_access_key_id,
+        aws_secret_access_key=aws_secret_access_key,
+        aws_session_token=aws_session_token)
 
     _, last_hashes = get_history(s3)
     if tool_hashes == last_hashes:
@@ -56,11 +65,14 @@ def get_tools(toolspecs, s3):
 
         if spec.s3_key in already_cached:
             s3.download_file(BIN_BUCKET, cache_key, bin_file)
-            print(f'+ aws s3 cp s3://{BIN_BUCKET}/{cache_key} {osp.relpath(bin_file, os.getcwd())}')
+            print(
+                f'+ aws s3 cp s3://{BIN_BUCKET}/{cache_key} {osp.relpath(bin_file, os.getcwd())}')
             del already_cached[spec.s3_key]  # not stale
         else:
             envs = dict(**spec.envs, CARGO_TARGET_DIR=osp.join(TOOLS_DIR, 'target'))
-            run(f'cargo install --force -q --root {TOOLS_DIR} --git {spec.source} {spec.pkg}',
+            run(
+                f'cargo +{spec.rust_toolchain} install --locked '
+                f'--force -q --root {TOOLS_DIR} --git {spec.source} {spec.pkg}',
                 envs=envs)
             s3.upload_file(bin_file, BIN_BUCKET, cache_key)
     run(f'chmod -R a+x {TOOLS_DIR}')
@@ -84,10 +96,14 @@ def run_tests(config):
     """Builds, unit tests, and locally deploys all projects found in canary repos
        and the starter repo produced by `oasis init`."""
 
+    canaries = config.get('canaries', [])
+    if not canaries:
+        return
+
     run('oasis', input='y\n', stdout=DEVNULL, check=False)  # gen config if needed
 
     with oasis_chain():
-        for canary in config['canaries']:
+        for canary in canaries:
             canary_dir = osp.split(canary)[-1]
             with pushd(osp.join(CANARIES_DIR, canary_dir)):
                 if osp.isdir('.git'):
@@ -126,11 +142,7 @@ def update_toolstate(toolspecs, s3):
     # ^ history has to be re-fetched so that it's as close to atomic as possible.
     # remember that other platforms' builds are also trying to push.
     history.append(f'{tstamp} {sys.platform} {" ".join(artifact_keys)}')
-    s3.put_object(
-        Bucket=BIN_BUCKET,
-        Key=HISTFILE_KEY,
-        Body='\n'.join(history).encode('utf8'),
-        ACL='public-read')
+    s3.put_object(Bucket=BIN_BUCKET, Key=HISTFILE_KEY, Body='\n'.join(history).encode('utf8'))
 
     existing_cd_keys = get_tool_keys(s3, CD_BIN_PFX)
     for spec in toolspecs.values():
@@ -165,8 +177,35 @@ def get_toolspecs(config):
         source = cfg.get('source', f'https://github.com/oasislabs/{pkg}')
         envs = cfg.get('envs', {})
         hash_ = run(f'git ls-remote {source} master | cut -f1', stdout=PIPE).stdout[:7]
-        specs[tool] = ToolSpec(source=source, envs=envs, pkg=pkg, s3_key=f'{tool}-{hash_}')
+        rust_toolchain = cfg.get('rust-toolchain', DEFAULT_RUST_TOOLCHAIN)
+        specs[tool] = ToolSpec(
+            source=source,
+            envs=envs,
+            pkg=pkg,
+            s3_key=f'{tool}-{hash_}',
+            rust_toolchain=rust_toolchain)
     return specs
+
+
+def get_aws_credentials(vault_addr, role_id, secret_id):
+    """Authenticate with Vault and get AWS credentials."""
+
+    url = f'{vault_addr}/v1/auth/approle/login'
+    data = {'role_id': role_id, 'secret_id': secret_id}
+    req = urllib.request.Request(url, method='POST', data=json.dumps(data).encode('utf-8'))
+    req.add_header('User-Agent', 'curl/7.58.0')  # cloudflare workaround
+    resp_json = json.loads(urllib.request.urlopen(req).read().decode('utf-8'))
+    vault_token = resp_json['auth']['client_token']
+
+    url = f'{vault_addr}/v1/aws/sts/production-toolstate-s3-bucket'
+    req = urllib.request.Request(url, method='GET')
+    req.add_header('X-Vault-Token', vault_token)
+    req.add_header('User-Agent', 'curl/7.58.0')  # cloudflare workaround
+    resp_json = json.loads(urllib.request.urlopen(req).read().decode('utf-8'))
+    aws_access_key_id = resp_json['data']['access_key']
+    aws_secret_access_key = resp_json['data']['secret_key']
+    aws_session_token = resp_json['data']['security_token']
+    return aws_access_key_id, aws_secret_access_key, aws_session_token
 
 
 def get_history(s3):

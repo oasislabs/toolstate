@@ -2,6 +2,7 @@
   "tools": {
     "oasis-chain": {
       "source": "https://github.com/oasislabs/oasis-chain",
+      "rust-toolchain": "nightly-2020-02-16",
       "envs": {"RUSTFLAGS": "-Ctarget-feature=+aes,+ssse3"}
     },
     "oasis-build": {
@@ -11,5 +12,5 @@
       "pkg": "oasis-cli"
     }
   },
-  "canaries": ["oasislabs/tutorials", "oasislabs/template"]
+  "//canaries": ["oasislabs/tutorials", "oasislabs/template"]
 }
