@@ -1,0 +1,74 @@
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+  schedule:
+    - cron: '0 */3 * * *'
+
+jobs:
+  lint:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install Python requirements
+        run: pip3 install yapf pylint
+
+      - name: Lint
+        run: |
+          yapf --diff *.py
+          pylint *.py
+
+  update_toolstate:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install Python requirements
+        run: pip3 install boto3 urllib3
+
+      - name: Install Rust nightly-2019-08-26
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly-2019-08-26
+
+      - name: Install Rust nightly-2020-02-16
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly-2020-02-16
+
+      - name: Update toolstate
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_ROLE_ID: ${{ secrets.VAULT_ROLE_ID }}
+          VAULT_SECRET_ID: ${{ secrets.VAULT_SECRET_ID }}
+        run: python3 update_toolstate.py
+
+  test_installer:
+    needs: update_toolstate
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Run installer
+        run: |
+          python2.7 installer.py --speedrun
+          python3 installer.py --speedrun --force
+
+      # - name: Test quickstart
+      #   run: |
+      #     oasis init test_proj
+      #     cd test_proj
+      #     oasis build
+      #     oasis chain -d
+      #     oasis test
