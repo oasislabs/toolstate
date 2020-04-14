@@ -169,7 +169,7 @@ def install_node(args, env_info):
         if which('brew'):  # This will a.s. be Homebrew.
             if args.force:
                 run('brew uninstall node', check=False, silent=True)
-            return run('brew install %s node' % ('--force' if args.force else ''))
+            return run('brew install %s node@12' % ('--force' if args.force else ''))
 
         if which('port'):  # There are no common non-MacPorts tools with this name.
             return run('port install node%s' % node_major_ver)
