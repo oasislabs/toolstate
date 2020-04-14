@@ -1,6 +1,8 @@
 #!/bin/bash
 # This script should go away when we have automated deployment.
 
+set -euo pipefail
+
 tools_url=s3://tools.oasis.dev
 
 year=$(date +"%y")
