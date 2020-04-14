@@ -52,7 +52,6 @@ jobs:
         run: python3 update_toolstate.py
 
   test_installer:
-    needs: update_toolstate
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
