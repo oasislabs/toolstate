@@ -1,22 +1,19 @@
 #!/usr/bin/env python3
 """Builds, tests, and publishes the latest versions of the Oasis toolchain."""
 
-import collections
+from collections import namedtuple
 from contextlib import contextmanager
-from datetime import datetime
-import json
 import os
 import os.path as osp
+import shutil
 import subprocess
 from subprocess import PIPE, DEVNULL
 import sys
 
-import urllib.request
 import boto3
+import schema
+import yaml
 
-ToolSpec = collections.namedtuple("ToolSpec", "pkg source envs s3_key rust_toolchain")
-
-DEFAULT_RUST_TOOLCHAIN = "nightly-2019-08-26"
 BASE_DIR = osp.abspath(osp.dirname(__file__))
 TOOLS_DIR = osp.join(BASE_DIR, "tools")
 BIN_DIR = osp.join(TOOLS_DIR, "bin")
@@ -25,76 +22,92 @@ MYPROJ = "my_project"
 BIN_BUCKET = "tools.oasis.dev"
 CACHE_BIN_PFX = f"{sys.platform}/cache/"
 CD_BIN_PFX = f"{sys.platform}/current/"  # cd = continuous deployment
-HISTFILE_KEY = "successful_builds"
+
+
+class Config:
+    """Tools config object."""
+
+    GITHUB_REPO_RE = schema.Regex(r"\w+/\w+")
+    CONFIG_SCHEMA = schema.Schema(
+        {
+            "tools": {
+                str: {"source": GITHUB_REPO_RE, schema.Optional("builder", default=None): str}
+            },
+            "canaries": [GITHUB_REPO_RE],
+        }
+    )
+
+    Tool = namedtuple("Tool", "name source builder")
+
+    def __init__(self, config_obj):
+        config = self.CONFIG_SCHEMA.validate(config_obj)
+        self.tools = {
+            name: self.Tool(name, self._fmt_github_url(spec["source"]), spec["builder"])
+            for name, spec in config["tools"].items()
+        }
+        self.canaries = list(map(self._fmt_github_url, config_obj["canaries"]))
+
+    @staticmethod
+    def _fmt_github_url(owner_repo):
+        return f"https://github.com/{owner_repo}"
+
+    def sources(self):
+        return {t.source for t in self.tools.values()}
 
 
 def main():
-    with open("config.json") as f_config:
-        config = json.load(f_config)
+    with open("config.yml") as f_config:
+        config = Config(yaml.safe_load(f_config))
 
-    toolspecs = get_toolspecs(config)
-    tool_hashes = frozenset(spec.s3_key for spec in toolspecs.values())
+    with s3_client() as s3:
+        head_versions = get_head_versions(config)
+        cached_versions = get_cached_versions(s3)
 
-    aws_access_key_id, aws_secret_access_key, aws_session_token = get_aws_credentials(
-        os.environ["VAULT_ADDR"], os.environ["VAULT_ROLE_ID"], os.environ["VAULT_SECRET_ID"],
-    )
+    to_build = {}  # name: ver
+    for tool, cur_ver in head_versions.items():
+        if cached_versions.get(tool) != cur_ver:
+            to_build[tool] = cur_ver
 
-    s3 = boto3.client(
-        "s3",
-        aws_access_key_id=aws_access_key_id,
-        aws_secret_access_key=aws_secret_access_key,
-        aws_session_token=aws_session_token,
-    )
-
-    _, last_hashes = get_history(s3)
-    if tool_hashes == last_hashes:
-        print(f'current: {" ".join(last_hashes)}')
+    if not to_build:
+        print(f"current: {' '.join('-'.join(name_ver) for name_ver in head_versions.items())}")
         return
 
-    get_tools(toolspecs, s3)
-    run_tests(config)
-    update_toolstate(toolspecs, s3)
+    update_current = False
+    try:
+        new_tools = [(config.tools[name], ver) for name, ver in to_build.items()]
+        build_tools(new_tools)
+        # run_tests(config)
+        update_current = True
+    finally:
+        with s3_client() as s3:
+            sync_tools(head_versions, cached_versions, update_current, s3)
 
 
-def get_tools(toolspecs, s3):
-    """Fetches current tools from the S3 cache or builds them locally.
-    Built tools that are not in the cache are added. Stale tools are removed."""
-    os.makedirs(BIN_DIR, exist_ok=True)
-    already_cached = get_tool_keys(s3, prefix=CACHE_BIN_PFX)
-    for tool, spec in toolspecs.items():
-        bin_file = osp.join(BIN_DIR, tool)
-        cache_key = f"{CACHE_BIN_PFX}{spec.s3_key}"
-
-        if spec.s3_key in already_cached:
-            s3.download_file(BIN_BUCKET, cache_key, bin_file)
-            print(f"+ aws s3 cp s3://{BIN_BUCKET}/{cache_key} {osp.relpath(bin_file, os.getcwd())}")
-            del already_cached[spec.s3_key]  # not stale
-        else:
-            envs = dict(**spec.envs, CARGO_TARGET_DIR=osp.join(TOOLS_DIR, "target"))
-            run(
-                f"cargo +{spec.rust_toolchain} install --locked "
-                f"--force -q --root {TOOLS_DIR} --git {spec.source} {spec.pkg}",
-                envs=envs,
-            )
-            s3.upload_file(bin_file, BIN_BUCKET, cache_key)
-    run(f"chmod -R a+x {TOOLS_DIR}")
-
-    if already_cached:  # remaining keys are stale
-        to_delete = {"Objects": [{"Key": k} for k in already_cached.values()]}
-        s3.delete_objects(Bucket=BIN_BUCKET, Delete=to_delete)
-
-
-def get_tool_keys(s3, prefix):
-    """Returns an object containing {tool_name-hash: object_s3_key}"""
-    objs = s3.list_objects_v2(Bucket=BIN_BUCKET, Prefix=prefix)
-    tool_keys = {}
-    for obj in objs.get("Contents", []):
-        key = obj["Key"]
-        tool_keys[key.rsplit("/", 1)[-1]] = key  # `<platform>/<prefix>/tool_name-hash`
-    return tool_keys
+def build_tools(tool_vers):
+    """Builds new tools."""
+    shutil.rmtree(BIN_DIR, ignore_errors=True)
+    os.makedirs(BIN_DIR)
+    for (tool, ver) in tool_vers:
+        repo_dir = osp.join(TOOLS_DIR, tool.source.rsplit("/", 1)[-1])
+        bin_file = osp.join(BIN_DIR, tool.name)
+        if not osp.isdir(repo_dir):
+            run(f"git clone -q {tool.source} {repo_dir}")
+        with pushd(repo_dir):
+            run(f"git fetch origin && git checkout -q {ver}")
+            if tool.builder is not None:
+                run(tool.builder)
+                shutil.copy(tool.name, BIN_DIR)
+            elif osp.isfile("Cargo.toml"):
+                run(f"cargo build -q --locked --release --bin {tool.name}",)
+                shutil.copy(osp.join("target", "release", tool.name), BIN_DIR)
+            elif osp.isfile("go.mod"):
+                raise RuntimeError("auto go build are not yet supported. please specify `builder`")
+            else:
+                raise RuntimeError("unable to auto-detect project type")
 
 
 def run_tests(config):
+    # pylint: disable=unused-variable
     """Builds, unit tests, and locally deploys all projects found in canary repos
        and the starter repo produced by `oasis init`."""
 
@@ -139,30 +152,83 @@ def run_tests(config):
             run("oasis test -q")
 
 
-def update_toolstate(toolspecs, s3):
+def find_manifests(*names):
+    """Returns the paths of all files in `names` in the repo containing cwd."""
+    names_alt = "\\|".join(names)
+    return run(f'git ls-files | grep -e "{names_alt}"', stdout=PIPE).stdout.split()
+
+
+def sync_tools(head_versions, cached_versions, update_current, s3):
     """Uploads built artifacts to the s3 under the current-but-not-released prefex.
        Removes any outdated artifacts."""
-    tstamp = datetime.utcnow().isoformat()
-    artifact_keys = (spec.s3_key for spec in toolspecs.values())
-    history, _ = get_history(s3)
-    # ^ history has to be re-fetched so that it's as close to atomic as possible.
-    # remember that other platforms' builds are also trying to push.
-    history.append(f'{tstamp} {sys.platform} {" ".join(artifact_keys)}')
-    s3.put_object(Bucket=BIN_BUCKET, Key=HISTFILE_KEY, Body="\n".join(history).encode("utf8"))
+    current_versions = get_current_versions(s3)
+    built_tools = {de.name for de in os.scandir(BIN_DIR)}
 
-    existing_cd_keys = get_tool_keys(s3, CD_BIN_PFX)
-    for spec in toolspecs.values():
-        new_cache_key = f"{CACHE_BIN_PFX}{spec.s3_key}"
-        new_cd_key = f"{CD_BIN_PFX}{spec.s3_key}"
-        if spec.s3_key in existing_cd_keys:
-            del existing_cd_keys[spec.s3_key]
-        else:
-            src = dict(Bucket=BIN_BUCKET, Key=new_cache_key)
-            s3.copy(src, BIN_BUCKET, new_cd_key)
+    to_delete = []
 
-    if existing_cd_keys:
-        to_delete = {"Objects": [{"Key": k} for k in existing_cd_keys.values()]}
-        s3.delete_objects(Bucket=BIN_BUCKET, Delete=to_delete)
+    def _upload_tool(prefix, tool):
+        s3.upload_file(
+            osp.join(BIN_DIR, tool), BIN_BUCKET, get_s3_key(prefix, tool, head_versions[tool]),
+        )
+
+    for tool in built_tools:
+        _upload_tool(CACHE_BIN_PFX, tool)
+        cached_version = cached_versions.get(tool)
+        if cached_version:
+            to_delete.append(get_s3_key(CACHE_BIN_PFX, tool, cached_version))
+
+    if update_current:
+        to_delete.extend(
+            get_s3_key(CD_BIN_PFX, tool, ver)
+            for tool, ver in current_versions.items()
+            if head_versions.get(tool) != ver
+        )
+        for tool, ver in head_versions.items():
+            cache_key = get_s3_key(CACHE_BIN_PFX, tool, ver)
+            cd_key = get_s3_key(CD_BIN_PFX, tool, ver)
+            s3.copy_object(
+                Bucket=BIN_BUCKET, Key=cd_key, CopySource=dict(Bucket=BIN_BUCKET, Key=cache_key)
+            )
+        for tool in built_tools:
+            _upload_tool(CD_BIN_PFX, tool)
+
+    if to_delete:
+        s3.delete_objects(Bucket=BIN_BUCKET, Delete={"Objects": [{"Key": k} for k in to_delete]})
+
+
+def get_head_versions(config):
+    """Returns { <tool-name>: <git-rev> } """
+    source_revs = {
+        source: run(f"git ls-remote {source} master | cut -f1", stdout=PIPE).stdout[:7]
+        for source in config.sources()
+    }
+    return {t.name: source_revs[t.source] for t in config.tools.values()}
+
+
+def get_current_versions(s3):
+    """Returns the current tools as `{ <tool name>: <version> }`."""
+    return _get_tools_in(s3, CD_BIN_PFX)
+
+
+def get_cached_versions(s3):
+    """Returns the cached tools as `{ <tool name>: <version> }`."""
+    return _get_tools_in(s3, CACHE_BIN_PFX)
+
+
+def _get_tools_in(s3, prefix):
+    """Returns the `{ <tool name>: <version> }`s in the bucket under `prefix`."""
+    objs = s3.list_objects_v2(Bucket=BIN_BUCKET, Prefix=prefix).get("Contents", [])
+    return dict(parse_s3_key(obj["Key"]) for obj in objs)
+
+
+def get_s3_key(prefix, tool, version):
+    """Returns the key for the tool and version under the provided prefix."""
+    return osp.join(prefix, f"{tool}-{version}")
+
+
+def parse_s3_key(key):
+    """Parses the S3 object path into (name, ver)."""
+    return key.rsplit("/", 1)[-1].rsplit("-", 1)
 
 
 def run(cmd, envs=None, check=True, **run_args):
@@ -174,72 +240,12 @@ def run(cmd, envs=None, check=True, **run_args):
     return subprocess.run(cmd, shell=True, env=penvs, check=check, encoding="utf8", **run_args)
 
 
-def get_toolspecs(config):
-    """Returns an object containing {tool_name: ToolSpec}"""
-    specs = {}
-    for tool, cfg in config["tools"].items():
-        cfg = cfg if cfg else {}
-        pkg = cfg.get("pkg", tool)
-        source = cfg.get("source", f"https://github.com/oasislabs/{pkg}")
-        envs = cfg.get("envs", {})
-        hash_ = run(f"git ls-remote {source} master | cut -f1", stdout=PIPE).stdout[:7]
-        rust_toolchain = cfg.get("rust-toolchain", DEFAULT_RUST_TOOLCHAIN)
-        specs[tool] = ToolSpec(
-            source=source,
-            envs=envs,
-            pkg=pkg,
-            s3_key=f"{tool}-{hash_}",
-            rust_toolchain=rust_toolchain,
-        )
-    return specs
-
-
-def get_aws_credentials(vault_addr, role_id, secret_id):
-    """Authenticate with Vault and get AWS credentials."""
-
-    url = f"{vault_addr}/v1/auth/approle/login"
-    data = {"role_id": role_id, "secret_id": secret_id}
-    req = urllib.request.Request(url, method="POST", data=json.dumps(data).encode("utf-8"))
-    req.add_header("User-Agent", "curl/7.58.0")  # cloudflare workaround
-    resp_json = json.loads(urllib.request.urlopen(req).read().decode("utf-8"))
-    vault_token = resp_json["auth"]["client_token"]
-
-    url = f"{vault_addr}/v1/aws/sts/production-toolstate-s3-bucket"
-    req = urllib.request.Request(url, method="GET")
-    req.add_header("X-Vault-Token", vault_token)
-    req.add_header("User-Agent", "curl/7.58.0")  # cloudflare workaround
-    resp_json = json.loads(urllib.request.urlopen(req).read().decode("utf-8"))
-    aws_access_key_id = resp_json["data"]["access_key"]
-    aws_secret_access_key = resp_json["data"]["secret_key"]
-    aws_session_token = resp_json["data"]["security_token"]
-    return aws_access_key_id, aws_secret_access_key, aws_session_token
-
-
-def get_history(s3):
-    """Returns:
-        - lines of the histfile
-        - the hashes of the last successfully built tools for this platform"""
-    # see `update_toolstate` for the format of the histfile
-    try:
-        history_obj = s3.get_object(Bucket=BIN_BUCKET, Key=HISTFILE_KEY)
-        body = history_obj["Body"].read().decode("utf8")
-        history = body.split("\n")
-    except s3.exceptions.NoSuchKey:
-        history = []
-    last_hashes = frozenset()
-    for build_stats in history[::-1]:
-        _date, platform, *tool_hashes = build_stats.split(" ")
-        if platform != sys.platform:
-            continue
-        last_hashes = frozenset(tool_hashes)
-        break
-    return (history, last_hashes)
-
-
-def find_manifests(*names):
-    """Returns the paths of all files in `names` in the repo containing cwd."""
-    names_alt = "\\|".join(names)
-    return run(f'git ls-files | grep -e "{names_alt}"', stdout=PIPE).stdout.split()
+@contextmanager
+def s3_client():
+    """Yields a boto s3 client that has permissions to modify the toolstate bucket."""
+    aws_cred_names = ["aws_access_key_id", "aws_secret_access_key", "aws_session_token"]
+    aws_creds = run(".github/workflows/get-s3-creds.sh", stdout=PIPE).stdout.split("\t")
+    yield boto3.client("s3", **dict(zip(aws_cred_names, aws_creds)))
 
 
 @contextmanager

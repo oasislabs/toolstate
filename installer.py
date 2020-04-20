@@ -191,22 +191,14 @@ def install_node(args, env_info):
 
 
 def install_oasis(args, env_info):
-    current_tools = run("curl -sSL %s/successful_builds" % TOOLS_URL, capture=True)
-    for tools in current_tools.split("\n")[::-1]:
-        _date, build_plat, tool_hashes = tools.split(" ", 2)
-        if build_plat == env_info.plat:
-            oasis_cli_key = next(
-                tool_hash
-                for tool_hash in tool_hashes.split(" ")[2:]
-                if re.match("oasis-[a-z0-f]{7,}$", tool_hash)
-            )
-            break
+    tools_xml = run("curl -sSL %s" % TOOLS_URL, capture=True)
+    oasis_cli_key = re.search(r"%s/current/oasis-[0-9a-f]{7,}" % env_info.plat, tools_xml).group(0)
 
     oasis_path = osp.join(args.prefix, "bin", "oasis")
     if not args.force and osp.exists(oasis_path):
         raise RuntimeError("`%s` already exists!" % oasis_path)
 
-    s3_url = "%s/%s/current/%s" % (TOOLS_URL, env_info.plat, oasis_cli_key)
+    s3_url = "%s/%s" % (TOOLS_URL, oasis_cli_key)
     run("curl -sSLo {path} {url}".format(path=oasis_path, url=s3_url))
     run("chmod a+x %s" % oasis_path)
     if args.speedrun:
@@ -233,7 +225,7 @@ def is_oasis(path):
     try:
         help_msg = run("%s --help" % path, capture=True, env=_skipconfig_env())
         return "Oasis developer tools" in help_msg
-    except subprocess.CalledProcessError:
+    except (OSError, subprocess.CalledProcessError):
         pass
     return False
 
@@ -301,12 +293,14 @@ def which(exe):
 
 
 # fmt: off
+# pylint: disable=missing-function-docstring,multiple-statements
 RED, GREEN, YELLOW, BLUE, PINK, PLAIN = list("\033[%sm" % i for i in range(91, 96)) + ["\033[0m"]
-def print_error(s): print(RED + s + PLAIN)
-def print_success(s): print(GREEN + s + PLAIN)
-def print_important(s): print(YELLOW + s + PLAIN)
-def print_info(s): print(BLUE + s + PLAIN)
-def print_header(s): print(PINK + s + PLAIN)
+def print_error(msg): print(RED + msg + PLAIN)
+def print_success(msg): print(GREEN + msg + PLAIN)
+def print_important(msg): print(YELLOW + msg + PLAIN)
+def print_info(msg): print(BLUE + msg + PLAIN)
+def print_header(msg): print(PINK + msg + PLAIN)
+# pylint: enable=missing-function-docstring,multiple-statements
 # fmt: on
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@
 good-names=i,j,k,s3,cp
 no-docstring-rgx=^(_|[a-z]+$|oasis_chain$|install_)
 allow-global-unused-variables=no
+min-public-methods=1
 
 [REPORTS]
 output-format=colorized

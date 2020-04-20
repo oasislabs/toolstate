@@ -1,0 +1,17 @@
+tools:
+  oasis-chain:
+    source: oasislabs/oasis-chain
+
+  oasis:
+    source: oasislabs/oasis-cli
+
+  oasis-build:
+    source: oasislabs/oasis-rs
+
+  oasis-gateway:
+    source: oasislabs/oasis-gateway
+    builder: go build -o oasis-gateway github.com/oasislabs/oasis-gateway/cmd/gateway
+
+canaries: []
+  # - oasislabs/template
+  # - https://github.com/oasislabs/tutorials
