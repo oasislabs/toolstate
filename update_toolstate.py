@@ -14,35 +14,37 @@ import sys
 import urllib.request
 import boto3
 
-ToolSpec = collections.namedtuple('ToolSpec', 'pkg source envs s3_key rust_toolchain')
+ToolSpec = collections.namedtuple("ToolSpec", "pkg source envs s3_key rust_toolchain")
 
-DEFAULT_RUST_TOOLCHAIN = 'nightly-2019-08-26'
+DEFAULT_RUST_TOOLCHAIN = "nightly-2019-08-26"
 BASE_DIR = osp.abspath(osp.dirname(__file__))
-TOOLS_DIR = osp.join(BASE_DIR, 'tools')
-BIN_DIR = osp.join(TOOLS_DIR, 'bin')
-CANARIES_DIR = osp.join(BASE_DIR, 'canaries')
-MYPROJ = 'my_project'
-BIN_BUCKET = 'tools.oasis.dev'
-CACHE_BIN_PFX = f'{sys.platform}/cache/'
-CD_BIN_PFX = f'{sys.platform}/current/'  # cd = continuous deployment
-HISTFILE_KEY = 'successful_builds'
+TOOLS_DIR = osp.join(BASE_DIR, "tools")
+BIN_DIR = osp.join(TOOLS_DIR, "bin")
+CANARIES_DIR = osp.join(BASE_DIR, "canaries")
+MYPROJ = "my_project"
+BIN_BUCKET = "tools.oasis.dev"
+CACHE_BIN_PFX = f"{sys.platform}/cache/"
+CD_BIN_PFX = f"{sys.platform}/current/"  # cd = continuous deployment
+HISTFILE_KEY = "successful_builds"
 
 
 def main():
-    with open('config.json') as f_config:
+    with open("config.json") as f_config:
         config = json.load(f_config)
 
     toolspecs = get_toolspecs(config)
     tool_hashes = frozenset(spec.s3_key for spec in toolspecs.values())
 
     aws_access_key_id, aws_secret_access_key, aws_session_token = get_aws_credentials(
-        os.environ['VAULT_ADDR'], os.environ['VAULT_ROLE_ID'], os.environ['VAULT_SECRET_ID'])
+        os.environ["VAULT_ADDR"], os.environ["VAULT_ROLE_ID"], os.environ["VAULT_SECRET_ID"],
+    )
 
     s3 = boto3.client(
-        's3',
+        "s3",
         aws_access_key_id=aws_access_key_id,
         aws_secret_access_key=aws_secret_access_key,
-        aws_session_token=aws_session_token)
+        aws_session_token=aws_session_token,
+    )
 
     _, last_hashes = get_history(s3)
     if tool_hashes == last_hashes:
@@ -61,24 +63,24 @@ def get_tools(toolspecs, s3):
     already_cached = get_tool_keys(s3, prefix=CACHE_BIN_PFX)
     for tool, spec in toolspecs.items():
         bin_file = osp.join(BIN_DIR, tool)
-        cache_key = f'{CACHE_BIN_PFX}{spec.s3_key}'
+        cache_key = f"{CACHE_BIN_PFX}{spec.s3_key}"
 
         if spec.s3_key in already_cached:
             s3.download_file(BIN_BUCKET, cache_key, bin_file)
-            print(
-                f'+ aws s3 cp s3://{BIN_BUCKET}/{cache_key} {osp.relpath(bin_file, os.getcwd())}')
+            print(f"+ aws s3 cp s3://{BIN_BUCKET}/{cache_key} {osp.relpath(bin_file, os.getcwd())}")
             del already_cached[spec.s3_key]  # not stale
         else:
-            envs = dict(**spec.envs, CARGO_TARGET_DIR=osp.join(TOOLS_DIR, 'target'))
+            envs = dict(**spec.envs, CARGO_TARGET_DIR=osp.join(TOOLS_DIR, "target"))
             run(
-                f'cargo +{spec.rust_toolchain} install --locked '
-                f'--force -q --root {TOOLS_DIR} --git {spec.source} {spec.pkg}',
-                envs=envs)
+                f"cargo +{spec.rust_toolchain} install --locked "
+                f"--force -q --root {TOOLS_DIR} --git {spec.source} {spec.pkg}",
+                envs=envs,
+            )
             s3.upload_file(bin_file, BIN_BUCKET, cache_key)
-    run(f'chmod -R a+x {TOOLS_DIR}')
+    run(f"chmod -R a+x {TOOLS_DIR}")
 
     if already_cached:  # remaining keys are stale
-        to_delete = {'Objects': [{'Key': k} for k in already_cached.values()]}
+        to_delete = {"Objects": [{"Key": k} for k in already_cached.values()]}
         s3.delete_objects(Bucket=BIN_BUCKET, Delete=to_delete)
 
 
@@ -86,9 +88,9 @@ def get_tool_keys(s3, prefix):
     """Returns an object containing {tool_name-hash: object_s3_key}"""
     objs = s3.list_objects_v2(Bucket=BIN_BUCKET, Prefix=prefix)
     tool_keys = {}
-    for obj in objs.get('Contents', []):
-        key = obj['Key']
-        tool_keys[key.rsplit('/', 1)[-1]] = key  # `<platform>/<prefix>/tool_name-hash`
+    for obj in objs.get("Contents", []):
+        key = obj["Key"]
+        tool_keys[key.rsplit("/", 1)[-1]] = key  # `<platform>/<prefix>/tool_name-hash`
     return tool_keys
 
 
@@ -96,41 +98,45 @@ def run_tests(config):
     """Builds, unit tests, and locally deploys all projects found in canary repos
        and the starter repo produced by `oasis init`."""
 
-    canaries = config.get('canaries', [])
+    canaries = config.get("canaries", [])
     if not canaries:
         return
 
-    run('oasis', input='y\n', stdout=DEVNULL, check=False)  # gen config if needed
+    run("oasis", input="y\n", stdout=DEVNULL, check=False)  # gen config if needed
 
     with oasis_chain():
         for canary in canaries:
             canary_dir = osp.split(canary)[-1]
             with pushd(osp.join(CANARIES_DIR, canary_dir)):
-                if osp.isdir('.git'):
-                    run('git fetch origin && git reset --hard origin/master',
+                if osp.isdir(".git"):
+                    run(
+                        "git fetch origin && git reset --hard origin/master",
                         stdout=DEVNULL,
-                        stderr=DEVNULL)
+                        stderr=DEVNULL,
+                    )
                 else:
-                    run(f'git clone -q --depth 1 https://github.com/{canary} .', stdout=DEVNULL)
+                    run(
+                        f"git clone -q --depth 1 https://github.com/{canary} .", stdout=DEVNULL,
+                    )
 
                 # Build services before apps. Each is done individually because a canary
                 # repo might contain multiple projects.
-                for service_manifest in find_manifests('Cargo.toml'):
+                for service_manifest in find_manifests("Cargo.toml"):
                     with pushd(osp.dirname(service_manifest)):
-                        run('oasis build -q')
-                        run('oasis test -q')
+                        run("oasis build -q")
+                        run("oasis test -q")
 
-                for app_manifest in find_manifests('package.json'):
+                for app_manifest in find_manifests("package.json"):
                     with pushd(osp.dirname(app_manifest)):
-                        run('yarn install -s')
-                        run('oasis test -q')
+                        run("yarn install -s")
+                        run("oasis test -q")
 
         myproj_dir = osp.join(CANARIES_DIR, MYPROJ)
-        run(f'rm -rf {myproj_dir} && oasis init -qq {myproj_dir}')
+        run(f"rm -rf {myproj_dir} && oasis init -qq {myproj_dir}")
         with pushd(myproj_dir):
             # In the quickstart, we can assume that the root contains only one project.
-            run('oasis build -q')
-            run('oasis test -q')
+            run("oasis build -q")
+            run("oasis test -q")
 
 
 def update_toolstate(toolspecs, s3):
@@ -142,12 +148,12 @@ def update_toolstate(toolspecs, s3):
     # ^ history has to be re-fetched so that it's as close to atomic as possible.
     # remember that other platforms' builds are also trying to push.
     history.append(f'{tstamp} {sys.platform} {" ".join(artifact_keys)}')
-    s3.put_object(Bucket=BIN_BUCKET, Key=HISTFILE_KEY, Body='\n'.join(history).encode('utf8'))
+    s3.put_object(Bucket=BIN_BUCKET, Key=HISTFILE_KEY, Body="\n".join(history).encode("utf8"))
 
     existing_cd_keys = get_tool_keys(s3, CD_BIN_PFX)
     for spec in toolspecs.values():
-        new_cache_key = f'{CACHE_BIN_PFX}{spec.s3_key}'
-        new_cd_key = f'{CD_BIN_PFX}{spec.s3_key}'
+        new_cache_key = f"{CACHE_BIN_PFX}{spec.s3_key}"
+        new_cd_key = f"{CD_BIN_PFX}{spec.s3_key}"
         if spec.s3_key in existing_cd_keys:
             del existing_cd_keys[spec.s3_key]
         else:
@@ -155,56 +161,57 @@ def update_toolstate(toolspecs, s3):
             s3.copy(src, BIN_BUCKET, new_cd_key)
 
     if existing_cd_keys:
-        to_delete = {'Objects': [{'Key': k} for k in existing_cd_keys.values()]}
+        to_delete = {"Objects": [{"Key": k} for k in existing_cd_keys.values()]}
         s3.delete_objects(Bucket=BIN_BUCKET, Delete=to_delete)
 
 
 def run(cmd, envs=None, check=True, **run_args):
     penvs = dict(os.environ)
-    penvs['PATH'] = BIN_DIR + ':' + penvs['PATH']
+    penvs["PATH"] = BIN_DIR + ":" + penvs["PATH"]
     if envs:
         penvs.update(envs)
-    print(f'+ {cmd}')
-    return subprocess.run(cmd, shell=True, env=penvs, check=check, encoding='utf8', **run_args)
+    print(f"+ {cmd}")
+    return subprocess.run(cmd, shell=True, env=penvs, check=check, encoding="utf8", **run_args)
 
 
 def get_toolspecs(config):
     """Returns an object containing {tool_name: ToolSpec}"""
     specs = {}
-    for tool, cfg in config['tools'].items():
+    for tool, cfg in config["tools"].items():
         cfg = cfg if cfg else {}
-        pkg = cfg.get('pkg', tool)
-        source = cfg.get('source', f'https://github.com/oasislabs/{pkg}')
-        envs = cfg.get('envs', {})
-        hash_ = run(f'git ls-remote {source} master | cut -f1', stdout=PIPE).stdout[:7]
-        rust_toolchain = cfg.get('rust-toolchain', DEFAULT_RUST_TOOLCHAIN)
+        pkg = cfg.get("pkg", tool)
+        source = cfg.get("source", f"https://github.com/oasislabs/{pkg}")
+        envs = cfg.get("envs", {})
+        hash_ = run(f"git ls-remote {source} master | cut -f1", stdout=PIPE).stdout[:7]
+        rust_toolchain = cfg.get("rust-toolchain", DEFAULT_RUST_TOOLCHAIN)
         specs[tool] = ToolSpec(
             source=source,
             envs=envs,
             pkg=pkg,
-            s3_key=f'{tool}-{hash_}',
-            rust_toolchain=rust_toolchain)
+            s3_key=f"{tool}-{hash_}",
+            rust_toolchain=rust_toolchain,
+        )
     return specs
 
 
 def get_aws_credentials(vault_addr, role_id, secret_id):
     """Authenticate with Vault and get AWS credentials."""
 
-    url = f'{vault_addr}/v1/auth/approle/login'
-    data = {'role_id': role_id, 'secret_id': secret_id}
-    req = urllib.request.Request(url, method='POST', data=json.dumps(data).encode('utf-8'))
-    req.add_header('User-Agent', 'curl/7.58.0')  # cloudflare workaround
-    resp_json = json.loads(urllib.request.urlopen(req).read().decode('utf-8'))
-    vault_token = resp_json['auth']['client_token']
+    url = f"{vault_addr}/v1/auth/approle/login"
+    data = {"role_id": role_id, "secret_id": secret_id}
+    req = urllib.request.Request(url, method="POST", data=json.dumps(data).encode("utf-8"))
+    req.add_header("User-Agent", "curl/7.58.0")  # cloudflare workaround
+    resp_json = json.loads(urllib.request.urlopen(req).read().decode("utf-8"))
+    vault_token = resp_json["auth"]["client_token"]
 
-    url = f'{vault_addr}/v1/aws/sts/production-toolstate-s3-bucket'
-    req = urllib.request.Request(url, method='GET')
-    req.add_header('X-Vault-Token', vault_token)
-    req.add_header('User-Agent', 'curl/7.58.0')  # cloudflare workaround
-    resp_json = json.loads(urllib.request.urlopen(req).read().decode('utf-8'))
-    aws_access_key_id = resp_json['data']['access_key']
-    aws_secret_access_key = resp_json['data']['secret_key']
-    aws_session_token = resp_json['data']['security_token']
+    url = f"{vault_addr}/v1/aws/sts/production-toolstate-s3-bucket"
+    req = urllib.request.Request(url, method="GET")
+    req.add_header("X-Vault-Token", vault_token)
+    req.add_header("User-Agent", "curl/7.58.0")  # cloudflare workaround
+    resp_json = json.loads(urllib.request.urlopen(req).read().decode("utf-8"))
+    aws_access_key_id = resp_json["data"]["access_key"]
+    aws_secret_access_key = resp_json["data"]["secret_key"]
+    aws_session_token = resp_json["data"]["security_token"]
     return aws_access_key_id, aws_secret_access_key, aws_session_token
 
 
@@ -215,13 +222,13 @@ def get_history(s3):
     # see `update_toolstate` for the format of the histfile
     try:
         history_obj = s3.get_object(Bucket=BIN_BUCKET, Key=HISTFILE_KEY)
-        body = history_obj['Body'].read().decode('utf8')
-        history = body.split('\n')
+        body = history_obj["Body"].read().decode("utf8")
+        history = body.split("\n")
     except s3.exceptions.NoSuchKey:
         history = []
     last_hashes = frozenset()
     for build_stats in history[::-1]:
-        _date, platform, *tool_hashes = build_stats.split(' ')
+        _date, platform, *tool_hashes = build_stats.split(" ")
         if platform != sys.platform:
             continue
         last_hashes = frozenset(tool_hashes)
@@ -231,7 +238,7 @@ def get_history(s3):
 
 def find_manifests(*names):
     """Returns the paths of all files in `names` in the repo containing cwd."""
-    names_alt = '\\|'.join(names)
+    names_alt = "\\|".join(names)
     return run(f'git ls-files | grep -e "{names_alt}"', stdout=PIPE).stdout.split()
 
 
@@ -240,20 +247,20 @@ def pushd(path):
     orig_dir = os.getcwd()
     os.makedirs(path, exist_ok=True)
     os.chdir(path)
-    print(f'+ cd {osp.relpath(os.getcwd(), orig_dir)}')
+    print(f"+ cd {osp.relpath(os.getcwd(), orig_dir)}")
     yield
-    print(f'+ cd {osp.relpath(orig_dir, os.getcwd())}')
+    print(f"+ cd {osp.relpath(orig_dir, os.getcwd())}")
     os.chdir(orig_dir)
 
 
 @contextmanager
 def oasis_chain():
-    env = {'PATH': f'{BIN_DIR}:/usr/bin', 'HOME': os.environ['HOME']}
-    cp = subprocess.Popen(['oasis', 'chain'], env=env, stdout=DEVNULL)
+    env = {"PATH": f"{BIN_DIR}:/usr/bin", "HOME": os.environ["HOME"]}
+    cp = subprocess.Popen(["oasis", "chain"], env=env, stdout=DEVNULL)
     yield
     cp.terminate()
     cp.wait()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
