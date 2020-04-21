@@ -1,14 +1,10 @@
 # Oasis Toolstate
 
-[![CircleCI](https://circleci.com/gh/oasislabs/toolstate.svg?style=svg)](https://circleci.com/gh/oasislabs/toolstate)
+![.github/workflows/toolstate.yml](https://github.com/oasislabs/toolstate/workflows/.github/workflows/toolstate.yml/badge.svg)
 
-This repo contains utilities for updating and publishing the status of the Oasis developer toolchain.
+This repo contains utilities for updating and publishing the status of the Oasis SDK.
 
 If you're a developer, you're probably here because you downloaded [installer.py](installer.py) and saw that it points here.
 
 The other file here, [update_toolstate.py](update_toolstate.py), runs periodically and tests the latest tools.
-Green builds are published as `latest-unstable`.
-
-"Wait, what about [promote_current.sh](promote_current.sh)?" you ask.
-Pay no attention to the person behind the curtain!
-This will be replaced with an automated continuous deployer.
+Green builds are published as `unstable` and can be downloaded using `oasis set-toolchain unstable` or by passing `--toolchain unstable` to the installer..
