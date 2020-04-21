@@ -1,0 +1,19 @@
+on:
+  schedule:
+    - cron: '07 06 * * MON'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Release tools
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_ROLE_ID: ${{ secrets.VAULT_ROLE_ID }}
+          VAULT_SECRET_ID: ${{ secrets.VAULT_SECRET_ID }}
+        run: |
+          source .github/workflows/get-s3-creds.sh
+          tools_bucket=s3://tools.oasis.dev
+          release=$(date +"%y.%V")
+          aws s3 cp --recursive $tools_bucket/linux/current $tools_bucket/linux/release/$release
+          aws s3 cp --recursive $tools_bucket/darwin/current $tools_bucket/darwin/release/$release
