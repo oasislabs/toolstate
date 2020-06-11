@@ -89,7 +89,6 @@ def build_tools(tool_vers):
     os.makedirs(BIN_DIR)
     for (tool, ver) in tool_vers:
         repo_dir = osp.join(TOOLS_DIR, tool.source.rsplit("/", 1)[-1])
-        bin_file = osp.join(BIN_DIR, tool.name)
         if not osp.isdir(repo_dir):
             run(f"git clone -q {tool.source} {repo_dir}")
         with pushd(repo_dir):
@@ -254,9 +253,11 @@ def pushd(path):
     os.makedirs(path, exist_ok=True)
     os.chdir(path)
     print(f"+ cd {osp.relpath(os.getcwd(), orig_dir)}")
-    yield
-    print(f"+ cd {osp.relpath(orig_dir, os.getcwd())}")
-    os.chdir(orig_dir)
+    try:
+        yield
+    finally:
+        print(f"+ cd {osp.relpath(orig_dir, os.getcwd())}")
+        os.chdir(orig_dir)
 
 
 @contextmanager

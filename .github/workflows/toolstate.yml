@@ -44,7 +44,10 @@ jobs:
           VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
           VAULT_ROLE_ID: ${{ secrets.VAULT_ROLE_ID }}
           VAULT_SECRET_ID: ${{ secrets.VAULT_SECRET_ID }}
-        run: python3 update_toolstate.py
+        run: |
+          rustup default nightly-2020-02-16
+          rustup component add rustc-dev
+          python3 update_toolstate.py
 
       - name: Run installer
         run: |
