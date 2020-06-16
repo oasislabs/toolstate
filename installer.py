@@ -10,11 +10,15 @@ import platform
 import re
 import shlex
 import subprocess
+import sys
 
 TOOLS_URL = "https://tools.oasis.dev"
 NODE_DIST_URL = "https://nodejs.org/dist/{ver}/node-{ver}-{plat}-x64.tar.gz"
 RUST_VER = "nightly-2019-08-26"
-REQUIRED_UTILS = ["cc", "curl", "git"]
+REQUIRED_UTILS = ["cc", "ld", "curl", "git"]
+# Library dependencies matrix.
+REQUIRED_LIBS = {"linux": ["libssl.so.1.1", "libcrypto.so.1.1"], "darwin": []}
+REQUIRED_NODE_VERSION = "12"
 
 PLAT_DARWIN = "darwin"
 PLAT_LINUX = "linux"
@@ -24,14 +28,20 @@ DEVNULL = open("/dev/null", "w")
 
 
 def main():
-    missing_utils = [u for u in REQUIRED_UTILS if not which(u)]
-    if missing_utils:
-        raise RuntimeError("missing system utilities: %s" % ", ".join(missing_utils))
-
     env_info = _get_env_info()
 
     if env_info.plat not in {PLAT_DARWIN, PLAT_LINUX} or platform.machine() != "x86_64":
         raise RuntimeError("Unsupported platform: %s (%s)" % (env_info.plat, platform.machine()))
+
+    missing_utils = [u for u in REQUIRED_UTILS if not which(u)]
+    if missing_utils:
+        raise RuntimeError("Missing system utilities: %s" % ", ".join(missing_utils))
+
+    missing_libs = [lib for lib in REQUIRED_LIBS[env_info.plat] if not installed_lib(lib)]
+    if missing_libs:
+        raise RuntimeError(
+            "Missing %s system libraries: %s" % (env_info.plat, ", ".join(missing_libs))
+        )
 
     args = _parse_args()
 
@@ -46,7 +56,7 @@ def main():
     elif not has_oasis_on_path:
         rc_file = modify_shell_profile(args, env_info)
         print_info("`oasis` will be available when you next log in.\n")
-        print_info("To configure your current shell run `source %s`\n" % rc_file)
+        print_info("To configure your current shell run `source %s`.\n" % rc_file)
 
     print_success("You're ready to start developing on Oasis!")
 
@@ -69,7 +79,7 @@ def _parse_args():
         help="Installation prefix. Default: `%s`" % default_prefix,
     )
     parser.add_argument(
-        "--no-modify-shell", action="store_true", help="Don't modify your shell profile"
+        "--no-modify-shell", action="store_true", help="Don't modify your shell profile."
     )
     parser.add_argument(
         "--force", action="store_true", help="Force install of not-deselected components."
@@ -143,23 +153,55 @@ def install(args, env_info):
     def bin_dir(*x):
         return osp.join(args.bin_dir, *x)
 
-    has_npm_install = which("npm") or osp.isfile(bin_dir("npm"))
-    # ^ `npm` because `node` is `nodejs` on Ubuntu. `npm` is consistent.
-    # Disjunction b/c `npm` might be in ~/.local/bin but not on PATH.
-    if not args.no_node and (args.force or not has_npm_install):
-        print_header("Installing Node")
-        node_ver = install_node(args, env_info)
-        _record_install("node-%s" % node_ver)
-        print("")
+    def get_node_version():
+        """Returns the un-prefixed semver of the Node.js executable."""
+        # Node executable on Ubuntu <=17.10 is named nodejs.
+        for node_exe in ["node", "nodejs"]:
+            # Node executables might be in ~/.local/bin but not on PATH.
+            if not which(node_exe):
+                node_exe = bin_dir(node_exe)
+            if which(node_exe):
+                # Trim-off leading "v".
+                return run("%s --version" % node_exe, capture=True)[1:]
+
+        return ""
+
+    if not args.no_node:
+        node_version = get_node_version()
+        if node_version and not args.force and not semver_greater_or_equal(node_version,
+                                                                           REQUIRED_NODE_VERSION):
+            raise RuntimeError(
+                "Node version %s found, but minimum required version is %s. Please remove \
+locally installed node."
+                % (node_version, REQUIRED_NODE_VERSION)
+            )
+
+        if args.force or not node_version:
+            print_header("Installing Node")
+            node_ver = install_node(args, env_info)
+            _record_install("node-%s" % node_ver)
+            print("")
 
     has_oasis_install = osp.isfile(bin_dir("oasis-chain")) and is_oasis(bin_dir("oasis"))
     if args.force or not has_oasis_install:
-        print_header("Installing the Oasis toolchain")
+        print_header("Installing the Oasis toolchain...")
         install_oasis(args, env_info)
         print("")
     else:
         print_header("The Oasis toolchain is already installed.")
         print("Run `oasis set-toolchain latest` to update.\n")
+
+
+def semver_greater_or_equal(installed_ver, required_ver):
+    """Compares installed version with required version of the package in semver format.
+
+    Semver is expected of format x.y.z-w+q. Compares installed x.y.z with required x.y.z.
+    """
+
+    def split_semver(ver):
+        return list(map(int, ver.split("-")[0].split(".")))
+
+    return split_semver(installed_ver) >= split_semver(required_ver)
 
 
 def install_rust():
@@ -292,6 +334,11 @@ def which(exe):
     return run("which %s" % exe, check=False) == 0
 
 
+def installed_lib(lib):
+    """Returns true, if specific library is installed."""
+    return run("ld -l:%s" % lib, check=False, silent=True) == 0
+
+
 # fmt: off
 # pylint: disable=missing-function-docstring,multiple-statements
 RED, GREEN, YELLOW, BLUE, PINK, PLAIN = list("\033[%sm" % i for i in range(91, 96)) + ["\033[0m"]
@@ -303,10 +350,12 @@ def print_header(msg): print(PINK + msg + PLAIN)
 # pylint: enable=missing-function-docstring,multiple-statements
 # fmt: on
 
+
 if __name__ == "__main__":
     try:
         main()
     except (RuntimeError, subprocess.CalledProcessError) as err:
         print(RED + "error:" + PLAIN + " " + str(err))
+        sys.exit(1)
     finally:
         DEVNULL.close()
