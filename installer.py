@@ -12,7 +12,7 @@ import shlex
 import subprocess
 import sys
 
-TOOLS_URL = "https://tools.oasis.dev"
+TOOLS_URL = "http://tools.oasis.dev.s3-us-west-2.amazonaws.com"
 NODE_DIST_URL = "https://nodejs.org/dist/{ver}/node-{ver}-{plat}-x64.tar.gz"
 RUST_VER = "nightly-2019-08-26"
 REQUIRED_UTILS = ["cc", "ld", "curl", "git"]
